@@ -115,8 +115,43 @@ button.ghost { border-color: var(--border); }
 .topnav-links { display: flex; gap: 28px; font-size: 14px; font-weight: 500; letter-spacing: 0.5px; }
 
 .hero { position: relative; max-width: 1100px; margin-top: clamp(24px, 6vh, 60px); display: flex; flex-direction: column; gap: 18px; }
-.hero-title { position: relative; align-self: flex-start; max-width: calc(100% - 0.5em); overflow-wrap: anywhere; font-size: clamp(72px, 15vw, 190px); font-weight: 800; line-height: 0.95; letter-spacing: -0.04em; margin: 0; }
-.hero-title::after { content: ""; position: absolute; right: -0.32em; top: -0.02em; width: 0.17em; height: 0.17em; border-radius: 50%; background: var(--pink); }
+.hero-title-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 3vw, 24px);
+  flex-wrap: wrap;
+  align-self: flex-start;
+  max-width: 100%;
+}
+.hero-title {
+  position: relative;
+  align-self: flex-start;
+  white-space: nowrap;
+  font-size: clamp(38px, 8.5vw, 115px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  margin: 0;
+}
+.hero-title::after {
+  content: "";
+  position: absolute;
+  right: -0.28em;
+  top: 0.05em;
+  width: 0.16em;
+  height: 0.16em;
+  border-radius: 50%;
+  background: var(--pink);
+}
+.hero-logo {
+  width: clamp(52px, 8vw, 84px);
+  height: clamp(52px, 8vw, 84px);
+  border-radius: 20px;
+  object-fit: contain;
+  box-shadow: 0 10px 24px rgba(20, 20, 60, 0.15);
+  animation: pop 0.8s var(--ease) 0.3s both;
+  flex-shrink: 0;
+}
 .hero-sub { display: flex; align-items: center; gap: 24px; align-self: flex-end; margin-right: clamp(0px, 8vw, 140px); }
 .hero-sub h2 { font-size: clamp(36px, 6vw, 72px); font-weight: 600; line-height: 1; margin: 0; letter-spacing: -0.02em; }
 .hero-copy { max-width: 440px; font-size: 18px; line-height: 1.5; margin: 8px 0 0; }
@@ -484,7 +519,7 @@ button.danger:hover:not(:disabled) { background: #c92f6f; color: #fff; border-co
 [dir="rtl"] button.mail-main, [dir="rtl"] button.link { text-align: right; }
 [dir="rtl"] .content-top > .muted { margin-right: 0; margin-left: auto; }
 [dir="rtl"] .panel::before { right: auto; left: -180px; }
-[dir="rtl"] .hero-title::after { right: auto; left: -0.32em; }
+[dir="rtl"] .hero-title::after { right: auto; left: -0.28em; }
 [dir="rtl"] .hero-sub { margin-right: 0; margin-left: clamp(0px, 8vw, 140px); }
 [dir="rtl"] .blob-blue { right: auto; left: -220px; }
 [dir="rtl"] .blob-pink { right: auto; left: 120px; }

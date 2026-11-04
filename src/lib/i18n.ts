@@ -38,7 +38,7 @@ export type Strings = {
 
 const en: Strings = {
   navTransport: "TRANSPORT", navTimetable: "TIMETABLE", navEvents: "EVENTS",
-  heroTitle: "Sorted.", heroSub1: "Your Student", heroSub2: "Inbox",
+  heroTitle: "Mail Sorted", heroSub1: "Your Student", heroSub2: "Inbox",
   heroCopy: "Bus updates, timetable changes, exams, hackathons and campus events, pulled out of your college mail automatically.",
   signIn: "Sign in with Google",
   privacy: "Read-only access. We never see your password, and never send or delete mail.",

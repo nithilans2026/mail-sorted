@@ -519,7 +519,16 @@ export default function Home() {
         </nav>
 
         <section className="hero">
-          <h1 className="hero-title">{t.heroTitle}</h1>
+          <div className="hero-title-row">
+            <h1 className="hero-title">{t.heroTitle}</h1>
+            <img
+              src="/icons/icon-192.png"
+              alt="MAIL SORTED"
+              className="hero-logo"
+              width={84}
+              height={84}
+            />
+          </div>
           <div className="hero-sub">
             <span className="rule" aria-hidden />
             <h2>
