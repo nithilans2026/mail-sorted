@@ -1,6 +1,6 @@
 // Service worker: makes the app installable, keeps the shell available offline,
 // and opens the app when a new-mail notification is tapped.
-const CACHE = "mail-sorted-shell-v2";
+const CACHE = "mail-sorted-shell-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
