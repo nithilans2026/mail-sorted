@@ -530,7 +530,6 @@ export default function Home() {
           </div>
           <p className="hero-copy">{t.heroCopy}</p>
           <button className="btn-primary" onClick={() => signIn("google")}>{t.signIn}</button>
-          <p className="muted small">{tx.privacy}</p>
           <div className="dots" aria-hidden>
             <i className="blue" />
             <i className="pink" />
