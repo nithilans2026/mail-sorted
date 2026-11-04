@@ -110,6 +110,44 @@ export async function fetchMailBody(accessToken: string, id: string): Promise<st
   return html ? htmlToText(html) : decodeEntities(m.snippet ?? "");
 }
 
+// Sends an email via Gmail. Returns the message id on success.
+export async function sendMail(
+  accessToken: string,
+  to: string,
+  subject: string,
+  body: string,
+  cc?: string,
+  bcc?: string,
+): Promise<string> {
+  const lines = [
+    `To: ${to}`,
+    cc ? `Cc: ${cc}` : "",
+    bcc ? `Bcc: ${bcc}` : "",
+    `Subject: ${subject}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "",
+    body,
+  ]
+    .filter(Boolean)
+    .join("\r\n");
+
+  const raw = Buffer.from(lines).toString("base64url");
+  const res = await fetch(`${API}/messages/send`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw }),
+  });
+  if (res.status === 403 && (await res.clone().text()).includes("insufficient")) {
+    throw new ScopeError("Missing gmail.send scope");
+  }
+  if (!res.ok) throw new Error(`Gmail API ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.id;
+}
+
 function decodeEntities(s: string) {
   return s
     .replace(/&amp;/g, "&")

@@ -26,22 +26,70 @@ const ListResult = z.object({
 
 export type ListItem = z.infer<typeof ListResult>["items"][number];
 
-// Subjects and previews for the inbox list, all in one request.
-export async function translateList(items: ListItem[], language: string): Promise<ListItem[]> {
+// Free Google Translate endpoint (works for all 45 languages without an API key)
+async function freeTranslate(text: string, targetLang: string): Promise<string> {
+  if (!text || !text.trim()) return text;
+  const langCode = targetLang === "zh" ? "zh-CN" : targetLang === "nb" ? "no" : targetLang;
+  try {
+    const res = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(langCode)}&dt=t&q=${encodeURIComponent(text)}`,
+      { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
+    );
+    if (!res.ok) throw new Error(`Translate API returned ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data) && Array.isArray(data[0])) {
+      return data[0].map((part: any) => part[0] || "").join("");
+    }
+  } catch (err) {
+    console.warn("Free translation request failed:", err);
+  }
+  return text;
+}
+
+async function translateItemsFree(items: ListItem[], langCode: string): Promise<ListItem[]> {
+  const code = langCode === "zh" ? "zh-CN" : langCode === "nb" ? "no" : langCode;
+  return Promise.all(
+    items.map(async (item) => {
+      try {
+        const [subject, snippet] = await Promise.all([
+          freeTranslate(item.subject, code).catch(() => item.subject),
+          freeTranslate(item.snippet, code).catch(() => item.snippet),
+        ]);
+        return { id: item.id, subject: subject || item.subject, snippet: snippet || item.snippet };
+      } catch {
+        return item;
+      }
+    })
+  );
+}
+
+// Subjects and previews for the inbox list. Tries Claude first if key is present, falls back to free translation.
+export async function translateList(items: ListItem[], langCode: string, languageName?: string): Promise<ListItem[]> {
   if (items.length === 0) return [];
-  const response = await client().messages.parse({
-    model: MODEL(),
-    max_tokens: 16000,
-    system: `${rules(language)}\nYou receive a JSON list of emails. Translate each subject and snippet, keeping every id.`,
-    output_config: { effort: "low", format: zodOutputFormat(ListResult) },
-    messages: [{ role: "user", content: JSON.stringify(items) }],
-  });
-  if (response.stop_reason === "refusal" || !response.parsed_output) throw new Error("Translation failed");
-  return response.parsed_output.items;
+  const code = langCode === "zh" ? "zh-CN" : langCode === "nb" ? "no" : langCode;
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const response = await client().messages.parse({
+        model: MODEL(),
+        max_tokens: 16000,
+        system: `${rules(languageName || langCode)}\nYou receive a JSON list of emails. Translate each subject and snippet, keeping every id.`,
+        output_config: { effort: "low", format: zodOutputFormat(ListResult) },
+        messages: [{ role: "user", content: JSON.stringify(items) }],
+      });
+      if (response.stop_reason !== "refusal" && response.parsed_output) {
+        return response.parsed_output.items;
+      }
+    } catch (e) {
+      console.warn("Claude translation failed, falling back to free translation", e);
+    }
+  }
+
+  return translateItemsFree(items, code);
 }
 
 // Splits long bodies on paragraph breaks so each request stays well within output limits.
-function chunks(text: string, size = 6000) {
+function chunks(text: string, size = 3000) {
   const out: string[] = [];
   let current = "";
   for (const para of text.split(/\n{2,}/)) {
@@ -56,20 +104,39 @@ function chunks(text: string, size = 6000) {
 }
 
 // Full email body, translated piece by piece and joined back together.
-export async function translateBody(subject: string, body: string, language: string) {
-  const anthropic = client();
-  const translateText = async (text: string) => {
-    const response = await anthropic.messages.create({
-      model: MODEL(),
-      max_tokens: 16000,
-      system: `${rules(language)}\nReply with the translation only.`,
-      output_config: { effort: "low" },
-      messages: [{ role: "user", content: text }],
-    });
-    if (response.stop_reason === "refusal") throw new Error("Translation failed");
-    return response.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
-  };
+export async function translateBody(subject: string, body: string, langCode: string, languageName?: string) {
+  const code = langCode === "zh" ? "zh-CN" : langCode === "nb" ? "no" : langCode;
 
-  const [translatedSubject, ...parts] = await Promise.all([translateText(subject), ...chunks(body).map(translateText)]);
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const anthropic = client();
+      const translateText = async (text: string) => {
+        const response = await anthropic.messages.create({
+          model: MODEL(),
+          max_tokens: 16000,
+          system: `${rules(languageName || langCode)}\nReply with the translation only.`,
+          output_config: { effort: "low" },
+          messages: [{ role: "user", content: text }],
+        });
+        if (response.stop_reason === "refusal") throw new Error("Translation failed");
+        return response.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+      };
+
+      const [translatedSubject, ...parts] = await Promise.all([
+        translateText(subject),
+        ...chunks(body, 6000).map(translateText),
+      ]);
+      return { subject: translatedSubject, body: parts.join("\n\n") };
+    } catch (e) {
+      console.warn("Claude body translation failed, falling back to free translation", e);
+    }
+  }
+
+  // Free translation fallback
+  const bodyChunks = chunks(body, 2000);
+  const [translatedSubject, ...parts] = await Promise.all([
+    freeTranslate(subject, code).catch(() => subject),
+    ...bodyChunks.map((chunk) => freeTranslate(chunk, code).catch(() => chunk)),
+  ]);
   return { subject: translatedSubject, body: parts.join("\n\n") };
 }

@@ -10,10 +10,12 @@ webinars & hackathons, and campus events. Deadlines float to the top, and new ma
 
 ## Features
 
-- **8 smart categories:** 🚌 Transport · 📅 Timetable · 📝 Exam Schedule · 📚 Class Assignments · 💡 Webinars & Hackathons · 🎉 Campus Events · 🔎 Review · 📦 Other
+- **📥 Complete Inbox + 8 smart categories:** 📥 Inbox (all received mail) · 🚌 Transport · 📅 Timetable · 📝 Exam Schedule · 📚 Class Assignments · 💡 Webinars & Hackathons · 🎉 Campus Events · 🔎 Review · 📦 Other
+- **✉️ Compose & Send Emails:** Click the prominent **+** button (in the top bar or floating action button) to compose and send emails directly inside the app
+- **📱 Mobile APK orientation switcher:** Easily switch between horizontal (top) and vertical (side) tab layouts directly on mobile and inside the APK
+- **🌐 Real-time translation into 45 languages:** Email subjects, previews, and full email bodies are automatically translated into any of the 45 supported languages (including RTL Arabic, Urdu, Hebrew)
 - **Rules + AI sorting:** free keyword rules handle most mail; Claude (optional) sorts the rest and pulls out deadlines and exam dates
 - **⏰ Deadline countdowns** for exams, assignments and hackathon registrations
-- **45 languages** for the interface (including right-to-left Arabic, Urdu and Hebrew), plus AI translation of whole emails
 - **Live sync:** checks for new mail every minute, auto-syncs every 2 hours, ⟳ Sync button, and a sync history
 - **🔔 Notifications:** loud alert sounds (Alarm, Siren, Bell, Chime, Ping), record or upload your own sound, or keep it silent
 - **Select mode:** pick mails and move them to Gmail Trash (recoverable for 30 days); hide senders you don't care about

@@ -7,11 +7,13 @@ import { LANGS, fill, langInfo, strings } from "@/lib/i18n";
 import { syncStrings } from "@/lib/i18n-sync";
 import { selectStrings } from "@/lib/i18n-select";
 import { notifyStrings } from "@/lib/i18n-notify";
+import { composeStrings } from "@/lib/i18n-compose";
 import { DEFAULT_SETTINGS, SETTINGS_KEY, type NotifySettings, playAlert, playTap, unlock, vibrate } from "@/lib/sounds";
 import CategoryArt from "./CategoryArt";
 import NotifyPanel from "./NotifyPanel";
 
-const TABS: { id: Category; icon: string }[] = [
+const TABS: { id: Category | "inbox"; icon: string }[] = [
+  { id: "inbox", icon: "📥" },
   { id: "transport", icon: "🚌" },
   { id: "timetable", icon: "📅" },
   { id: "exams", icon: "📝" },
@@ -160,7 +162,7 @@ function CreatedBy({ label }: { label: string }) {
 export default function Home() {
   const { data: session, status } = useSession();
   const [mails, setMails] = useState<SortedMail[]>([]);
-  const [tab, setTab] = useState<Category>("transport");
+  const [tab, setTab] = useState<Category | "inbox">("inbox");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState<string[]>([]);
@@ -181,17 +183,24 @@ export default function Home() {
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [pull, setPull] = useState(0); // pull-to-refresh distance in px
   const [showTop, setShowTop] = useState(false);
+  const [compose, setCompose] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendSuccess, setSendSuccess] = useState(false);
+
   const touchRef = useRef({ y: 0, active: false });
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
   const busyRef = useRef(false);
   const seenRef = useRef<Set<string> | null>(null);
   const checkedRef = useRef<Set<string>>(new Set());
+  const translatingRef = useRef(false);
 
   const t = strings(lang);
   const ts = syncStrings(lang);
   const tx = selectStrings(lang);
   const tn = notifyStrings(lang);
+  const tc = composeStrings(lang);
   const locale = langInfo(lang).locale;
 
   useEffect(() => {
@@ -357,8 +366,6 @@ export default function Home() {
         const res = await fetch("/api/mail-check");
         if (!res.ok) return;
         const { ids } = (await res.json()) as { ids: string[] };
-        // Gmail lists newest first: anything above the newest mail we already show is genuinely new.
-        // (Remembering checked ids stops a hidden sender's mail from triggering a sync every minute.)
         const firstSeen = ids.findIndex((id) => seenRef.current!.has(id));
         const newer = firstSeen === -1 ? ids : ids.slice(0, firstSeen);
         if (newer.some((id) => !checkedRef.current.has(id))) load("newMail");
@@ -383,10 +390,13 @@ export default function Home() {
 
   // Translate subjects and previews for any mails not yet translated into the chosen language.
   useEffect(() => {
-    if (lang === "en" || mails.length === 0 || translateState !== "idle") return;
+    if (lang === "en" || mails.length === 0) return;
     const missing = mails.filter((m) => !translations[`${lang}:${m.id}`]);
-    if (missing.length === 0) return;
+    if (missing.length === 0 || translatingRef.current) return;
+
+    translatingRef.current = true;
     setTranslateState("busy");
+
     fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -397,15 +407,23 @@ export default function Home() {
         if (!res.ok) throw new Error(data.error ?? "FAILED");
         setTranslations((prev) => {
           const next = { ...prev };
-          for (const item of data.items) next[`${lang}:${item.id}`] = { subject: item.subject, snippet: item.snippet };
-          // Anything the model skipped keeps its original text, so we don't retry forever.
-          for (const m of missing) next[`${lang}:${m.id}`] ??= { subject: m.subject, snippet: m.snippet };
+          for (const item of (data.items || [])) {
+            next[`${lang}:${item.id}`] = { subject: item.subject, snippet: item.snippet };
+          }
+          for (const m of missing) {
+            next[`${lang}:${m.id}`] ??= { subject: m.subject, snippet: m.snippet };
+          }
           return next;
         });
         setTranslateState("idle");
       })
-      .catch((e) => setTranslateState(e.message === "NO_KEY" ? "NO_KEY" : "FAILED"));
-  }, [lang, mails, translations, translateState]);
+      .catch((e) => {
+        setTranslateState(e.message === "NO_KEY" ? "NO_KEY" : "FAILED");
+      })
+      .finally(() => {
+        translatingRef.current = false;
+      });
+  }, [lang, mails, translations]);
 
   const openReader = async (mail: SortedMail) => {
     setReader({ mail, loading: true, showOriginal: false });
@@ -442,7 +460,7 @@ export default function Home() {
   const formatDate = (iso: string) => new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = {};
+    const c: Record<string, number> = { inbox: mails.length };
     for (const m of mails) c[m.category] = (c[m.category] ?? 0) + 1;
     return c;
   }, [mails]);
@@ -524,14 +542,17 @@ export default function Home() {
     );
   }
 
-  const shown = mails.filter((m) => m.category === tab);
+  const shown = tab === "inbox" ? mails : mails.filter((m) => m.category === tab);
   const sortedShown = tab === "exams" || tab === "assignments"
     ? [...shown].sort((a, b) => (a.deadline ?? "9999").localeCompare(b.deadline ?? "9999"))
+    : tab === "inbox"
+    ? [...shown].sort((a, b) => b.date.localeCompare(a.date))
     : shown;
 
   const activeTab = TABS.find((tb) => tb.id === tab)!;
+  const artCategory: Category = tab === "inbox" ? "other" : tab;
 
-  // Select mode: only mails visible in the current category can be selected and trashed.
+  // Select mode: only mails visible in the current view can be selected and trashed.
   const selectedHere = sortedShown.filter((m) => selected.has(m.id)).map((m) => m.id);
   const allSelected = sortedShown.length > 0 && selectedHere.length === sortedShown.length;
   const toggleSelect = (id: string) =>
@@ -575,7 +596,7 @@ export default function Home() {
   // Pull down from the very top on a phone to sync.
   const touchStart = touchRef.current;
   const onTouchStart = (e: React.TouchEvent) => {
-    touchStart.active = window.scrollY <= 0 && !reader;
+    touchStart.active = window.scrollY <= 0 && !reader && !compose;
     touchStart.y = e.touches[0].clientY;
   };
   const onTouchMove = (e: React.TouchEvent) => {
@@ -608,6 +629,29 @@ export default function Home() {
             <span className="envelope-glyph" aria-label="MAIL SORTED">✉</span>
             <i aria-hidden />
           </div>
+
+          {/* Mobile APK orientation switcher: switch between Horizontal (top) and Vertical (side) tabs */}
+          <div className="mobile-orientation-toggle" aria-label={tc.orientation}>
+            <button
+              type="button"
+              className={tabLayout === "top" ? "active" : ""}
+              onClick={() => changeLayout("top")}
+              title={tc.horizontal}
+              aria-label={tc.horizontal}
+            >
+              ↔ {tc.horizontal}
+            </button>
+            <button
+              type="button"
+              className={tabLayout === "side" ? "active" : ""}
+              onClick={() => changeLayout("side")}
+              title={tc.vertical}
+              aria-label={tc.vertical}
+            >
+              ↕ {tc.vertical}
+            </button>
+          </div>
+
           <nav className="side-nav">
             {TABS.map((tb, i) => (
               <button
@@ -620,7 +664,7 @@ export default function Home() {
                 }}
               >
                 <span className="side-icon" aria-hidden>{tb.icon}</span>
-                <span className="side-label">{t.tabs[tb.id]}</span>
+                <span className="side-label">{tb.id === "inbox" ? t.inbox : t.tabs[tb.id]}</span>
                 <span className="side-count">{counts[tb.id] ?? 0}</span>
               </button>
             ))}
@@ -633,6 +677,17 @@ export default function Home() {
             <span className="muted small">
               {loading ? t.refreshing : updatedAt ? fill(t.updated, { time: updatedAt.toLocaleTimeString(locale) }) : ""}
             </span>
+
+            {/* Plus button to compose & send emails */}
+            <button
+              className="compose-btn"
+              onClick={() => { setCompose(true); setSendError(null); setSendSuccess(false); }}
+              aria-label={tc.compose}
+              title={tc.compose}
+            >
+              <span className="plus-sign" aria-hidden>＋</span> {tc.compose}
+            </button>
+
             <LanguagePicker lang={lang} onChange={changeLang} label={t.language} />
             <LayoutToggle value={tabLayout} onChange={changeLayout} labels={{ side: t.tabsSide, top: t.tabsTop }} />
             <ThemeToggle label={t.toggleTheme} />
@@ -658,18 +713,18 @@ export default function Home() {
 
           <div className="hero-row">
             <div className="hero-left" key={tab}>
-              <h1 className="cat-title">{t.tabs[tab]}</h1>
+              <h1 className="cat-title">{tab === "inbox" ? t.inbox : t.tabs[tab]}</h1>
               <div className="dots" aria-hidden>
                 <i className="blue" />
                 <i className="pink" />
                 <i className="green" />
               </div>
               <p className="cat-desc">
-                {fill(t.mailsCount, { n: sortedShown.length })} · {t.inbox}
+                {fill(t.mailsCount, { n: sortedShown.length })} · {tab === "inbox" ? t.inbox : t.inbox}
               </p>
             </div>
             <div className="swirl-tile">
-              <CategoryArt category={activeTab.id} />
+              <CategoryArt category={artCategory} />
               {deadlines.length > 0 && (
                 <div className="tile-deadlines">
                   <h2>⏰ {t.deadlines}</h2>
@@ -691,131 +746,149 @@ export default function Home() {
           {lang !== "en" && translateState === "NO_KEY" && <p className="notice">{t.needsKey}</p>}
           {lang !== "en" && translateState === "FAILED" && <p className="notice">{t.translateFailed}</p>}
 
-      {needsReauth && (
-        <p className="notice reauth">
-          {tx.needsReauth} <button onClick={() => signIn("google")}>{tx.reauth}</button>
-        </p>
-      )}
-
-      {sortedShown.length > 0 && (
-        <div className={selecting ? "select-bar active" : "select-bar"}>
-          {!selecting ? (
-            <button className="ghost" onClick={() => setSelecting(true)}>☑ {tx.select}</button>
-          ) : (
-            <>
-              <button
-                className="ghost"
-                onClick={() => setSelected(allSelected ? new Set() : new Set(sortedShown.map((m) => m.id)))}
-              >
-                {allSelected ? tx.deselectAll : tx.selectAll}
-              </button>
-              <span className="select-count">{fill(tx.selectedCount, { n: selectedHere.length })}</span>
-              <button className="danger" onClick={trashSelected} disabled={selectedHere.length === 0 || trashing}>
-                🗑 {tx.moveToTrash}
-              </button>
-              <button className="ghost" onClick={exitSelect}>{tx.cancel}</button>
-            </>
+          {needsReauth && (
+            <p className="notice reauth">
+              {tx.needsReauth} <button onClick={() => signIn("google")}>{tx.reauth}</button>
+            </p>
           )}
-        </div>
-      )}
 
-      <ul className={selecting ? "mails selecting" : "mails"} key={tab}>
-        {sortedShown.length === 0 && !loading && <li className="muted empty">{t.nothing}</li>}
-        {sortedShown.map((m, i) => {
-          const text = shownText(m);
-          const isSelected = selected.has(m.id);
-          return (
-            <li
-              key={m.id}
-              className={`mail reveal cat-${m.category}${isSelected ? " selected" : ""}`}
-              style={{ "--i": Math.min(i, 6) } as React.CSSProperties}
-            >
-              {selecting && (
-                <input
-                  type="checkbox"
-                  className="mail-check"
-                  checked={isSelected}
-                  onChange={() => toggleSelect(m.id)}
-                  aria-label={text.subject}
-                />
+          {sortedShown.length > 0 && (
+            <div className={selecting ? "select-bar active" : "select-bar"}>
+              {!selecting ? (
+                <button className="ghost" onClick={() => setSelecting(true)}>☑ {tx.select}</button>
+              ) : (
+                <>
+                  <button
+                    className="ghost"
+                    onClick={() => setSelected(allSelected ? new Set() : new Set(sortedShown.map((m) => m.id)))}
+                  >
+                    {allSelected ? tx.deselectAll : tx.selectAll}
+                  </button>
+                  <span className="select-count">{fill(tx.selectedCount, { n: selectedHere.length })}</span>
+                  <button className="danger" onClick={trashSelected} disabled={selectedHere.length === 0 || trashing}>
+                    🗑 {tx.moveToTrash}
+                  </button>
+                  <button className="ghost" onClick={exitSelect}>{tx.cancel}</button>
+                </>
               )}
-              <button className="mail-main" onClick={() => (selecting ? toggleSelect(m.id) : openReader(m))}>
-                <div className="mail-top">
-                  <strong>
-                    {newIds.has(m.id) && <span className="new-badge">{ts.newBadge}</span>}
-                    {m.from}
-                  </strong>
-                  <span className="muted small">{formatDate(m.date)}</span>
-                </div>
-                <div className="subject">{text.subject}</div>
-                <div className="muted small snippet">{text.snippet}</div>
-                {m.deadline && <span className="pill">{fill(t.deadline, { date: formatDate(m.deadline) })}</span>}
-              </button>
-              <div className="actions">
-                {tab === "review" && (
-                  <select defaultValue="" onChange={(e) => markImportant(m, e.target.value as Category)}>
-                    <option value="" disabled>{t.moveTo}</option>
-                    {TABS.filter((tb) => tb.id !== "review").map((tb) => (
-                      <option key={tb.id} value={tb.id}>{t.tabs[tb.id]}</option>
-                    ))}
-                  </select>
-                )}
-                <button className="ghost" onClick={() => notImportant(m)} title={m.fromEmail}>
-                  {t.notImportant}
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+            </div>
+          )}
 
-      {blocked.length > 0 && (
-        <details className="blocked">
-          <summary>{fill(t.hiddenSenders, { n: blocked.length })}</summary>
-          <ul>
-            {blocked.map((s) => (
-              <li key={s}>
-                {s}{" "}
-                <button
-                  className="ghost"
-                  onClick={() => {
-                    const next = blocked.filter((b) => b !== s);
-                    setBlocked(next);
-                    write(BLOCK_KEY, next);
-                  }}
+          <ul className={selecting ? "mails selecting" : "mails"} key={tab}>
+            {sortedShown.length === 0 && !loading && <li className="muted empty">{t.nothing}</li>}
+            {sortedShown.map((m, i) => {
+              const text = shownText(m);
+              const isSelected = selected.has(m.id);
+              return (
+                <li
+                  key={m.id}
+                  className={`mail reveal cat-${m.category}${isSelected ? " selected" : ""}`}
+                  style={{ "--i": Math.min(i, 6) } as React.CSSProperties}
                 >
-                  {t.unhide}
-                </button>
-              </li>
-            ))}
+                  {selecting && (
+                    <input
+                      type="checkbox"
+                      className="mail-check"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(m.id)}
+                      aria-label={text.subject}
+                    />
+                  )}
+                  <button className="mail-main" onClick={() => (selecting ? toggleSelect(m.id) : openReader(m))}>
+                    <div className="mail-top">
+                      <strong>
+                        {newIds.has(m.id) && <span className="new-badge">{ts.newBadge}</span>}
+                        {m.from}
+                      </strong>
+                      <div className="mail-meta">
+                        {tab === "inbox" && (
+                          <span className="inbox-cat-badge">
+                            {TABS.find((tb) => tb.id === m.category)?.icon} {t.tabs[m.category]}
+                          </span>
+                        )}
+                        <span className="muted small">{formatDate(m.date)}</span>
+                      </div>
+                    </div>
+                    <div className="subject">{text.subject}</div>
+                    <div className="muted small snippet">{text.snippet}</div>
+                    {m.deadline && <span className="pill">{fill(t.deadline, { date: formatDate(m.deadline) })}</span>}
+                  </button>
+                  <div className="actions">
+                    {tab === "review" && (
+                      <select defaultValue="" onChange={(e) => markImportant(m, e.target.value as Category)}>
+                        <option value="" disabled>{t.moveTo}</option>
+                        {TABS.filter((tb): tb is { id: Category; icon: string } => tb.id !== "review" && tb.id !== "inbox").map((tb) => (
+                          <option key={tb.id} value={tb.id}>{t.tabs[tb.id]}</option>
+                        ))}
+                      </select>
+                    )}
+                    <button className="ghost" onClick={() => notImportant(m)} title={m.fromEmail}>
+                      {t.notImportant}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
-        </details>
-      )}
 
-      {history.length > 0 && (
-        <details className="sync-history">
-          <summary>🕘 {ts.syncHistory} <span className="muted small">({history.length})</span></summary>
-          <ol>
-            {history.map((h) => (
-              <li key={h.at} className={h.ok ? "" : "failed"}>
-                <time dateTime={new Date(h.at).toISOString()}>
-                  {new Date(h.at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                </time>
-                <span className={`trigger trigger-${h.trigger}`}>{ts.trigger[h.trigger]}</span>
-                <span className="result">
-                  {!h.ok ? ts.syncFailed : h.fresh > 0 ? fill(ts.newCount, { n: h.fresh }) : ts.noNew}
-                  {h.ok && <span className="muted"> · {fill(t.mailsCount, { n: h.total })}</span>}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
+          {blocked.length > 0 && (
+            <details className="blocked">
+              <summary>{fill(t.hiddenSenders, { n: blocked.length })}</summary>
+              <ul>
+                {blocked.map((s) => (
+                  <li key={s}>
+                    {s}{" "}
+                    <button
+                      className="ghost"
+                      onClick={() => {
+                        const next = blocked.filter((b) => b !== s);
+                        setBlocked(next);
+                        write(BLOCK_KEY, next);
+                      }}
+                    >
+                      {t.unhide}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
-      <CreatedBy label={t.createdBy} />
+          {history.length > 0 && (
+            <details className="sync-history">
+              <summary>🕘 {ts.syncHistory} <span className="muted small">({history.length})</span></summary>
+              <ol>
+                {history.map((h) => (
+                  <li key={h.at} className={h.ok ? "" : "failed"}>
+                    <time dateTime={new Date(h.at).toISOString()}>
+                      {new Date(h.at).toLocaleString(locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </time>
+                    <span className={`trigger trigger-${h.trigger}`}>{ts.trigger[h.trigger]}</span>
+                    <span className="result">
+                      {!h.ok ? ts.syncFailed : h.fresh > 0 ? fill(ts.newCount, { n: h.fresh }) : ts.noNew}
+                      {h.ok && <span className="muted"> · {fill(t.mailsCount, { n: h.total })}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+
+          <CreatedBy label={t.createdBy} />
         </section>
       </main>
 
+      {/* Floating Action Plus Button for Composing / Sending Email */}
+      <button
+        className="compose-fab"
+        onClick={() => { setCompose(true); setSendError(null); setSendSuccess(false); }}
+        aria-label={tc.compose}
+        title={tc.compose}
+      >
+        <span className="plus-icon" aria-hidden>＋</span>
+      </button>
+
+      {/* Back to top button */}
       <button
         className={`to-top${showTop ? " show" : ""}`}
         onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -834,6 +907,7 @@ export default function Home() {
         </div>
       )}
 
+      {/* Mail Reader modal */}
       {reader && (
         <div className="reader-backdrop" onClick={() => setReader(null)}>
           <article className="reader" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal>
@@ -846,7 +920,7 @@ export default function Home() {
             <h2>{reader.translation && !reader.showOriginal ? reader.translation.subject : reader.mail.subject}</h2>
             {reader.loading && <p className="muted">{lang === "en" ? t.loading : t.translating}</p>}
             {reader.error && <p className="error">{reader.error}</p>}
-            {reader.translateError && <p className="notice">{reader.translateError === "NO_KEY" ? t.needsKey : t.translateFailed}</p>}
+            {reader.translateError && <p className="notice">{t.translateFailed}</p>}
             {reader.body !== undefined && (
               <div className="reader-body">
                 {reader.translation && !reader.showOriginal ? reader.translation.body : reader.body}
@@ -860,6 +934,87 @@ export default function Home() {
               )}
               <a className="btn-link" href={reader.mail.link} target="_blank" rel="noreferrer">{t.openGmail} ↗</a>
             </div>
+          </article>
+        </div>
+      )}
+
+      {/* Compose & Send Email modal */}
+      {compose && (
+        <div className="reader-backdrop" onClick={() => !sending && setCompose(false)}>
+          <article className="compose-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal>
+            <div className="reader-top">
+              <h2><span className="plus-sign" aria-hidden>＋</span> {tc.compose}</h2>
+              <button onClick={() => !sending && setCompose(false)}>{t.close}</button>
+            </div>
+            <form
+              className="compose-form"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const form = e.target as HTMLFormElement;
+                const fd = new FormData(form);
+                setSending(true);
+                setSendError(null);
+                setSendSuccess(false);
+                try {
+                  const res = await fetch("/api/mail-send", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      to: fd.get("to"),
+                      subject: fd.get("subject"),
+                      body: fd.get("body"),
+                      cc: fd.get("cc") || undefined,
+                      bcc: fd.get("bcc") || undefined,
+                    }),
+                  });
+                  const data = await res.json();
+                  if (res.status === 403 && data.error === "SCOPE") {
+                    setNeedsReauth(true);
+                    setSendError(tc.sendNeedsReauth);
+                    return;
+                  }
+                  if (!res.ok) throw new Error(data.error);
+                  setSendSuccess(true);
+                  form.reset();
+                  setTimeout(() => setCompose(false), 1500);
+                } catch (err: any) {
+                  setSendError(err.message || tc.sendFailed);
+                } finally {
+                  setSending(false);
+                }
+              }}
+            >
+              <label className="compose-field">
+                <span>{tc.composeTo} *</span>
+                <input name="to" type="email" required placeholder="recipient@example.com" autoFocus />
+              </label>
+              <div className="compose-row">
+                <label className="compose-field">
+                  <span>Cc</span>
+                  <input name="cc" type="email" placeholder={tc.composeOptional} />
+                </label>
+                <label className="compose-field">
+                  <span>Bcc</span>
+                  <input name="bcc" type="email" placeholder={tc.composeOptional} />
+                </label>
+              </div>
+              <label className="compose-field">
+                <span>{tc.composeSubject}</span>
+                <input name="subject" placeholder={tc.composeSubject} />
+              </label>
+              <label className="compose-field body-field">
+                <span>{tc.composeBody}</span>
+                <textarea name="body" rows={8} placeholder={tc.composeBodyPlaceholder} />
+              </label>
+              {sendError && <p className="error">{sendError}</p>}
+              {sendSuccess && <p className="notice">{tc.sendOk}</p>}
+              <div className="compose-actions">
+                <button type="submit" className="btn-primary compose-send" disabled={sending}>
+                  {sending ? tc.sendingSpin : tc.composeSend}
+                </button>
+                <button type="button" className="ghost" onClick={() => !sending && setCompose(false)}>{t.close}</button>
+              </div>
+            </form>
           </article>
         </div>
       )}

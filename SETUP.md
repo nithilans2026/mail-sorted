@@ -17,7 +17,7 @@ Close and reopen the terminal afterwards, then check: `node -v`
    - Authorised redirect URI: `http://localhost:3000/api/auth/callback/google`
    - Create, then copy the **Client ID** and **Client secret**.
 
-> The app asks for `gmail.modify` (read mail + move to Trash). It cannot send mail or permanently delete it.
+> The app asks for `gmail.modify` (read mail + move to Trash) and `gmail.send` (compose and send new emails). It cannot permanently delete mail.
 > Some college accounts block outside apps; if Google says *"access blocked by your administrator"*, use a personal Gmail
 > or forward your college mail to one.
 

@@ -1,8 +1,9 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
-// gmail.modify = read + move to Trash / change labels. It cannot permanently delete mail or send it.
-const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
+// gmail.modify = read + move to Trash / change labels.
+// gmail.send  = compose and send new mail (does not grant delete).
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
 
 async function refreshAccessToken(token: any) {
   try {

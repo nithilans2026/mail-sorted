@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { fetchMailBody } from "@/lib/gmail";
 import { langInfo } from "@/lib/i18n";
-import { NoKeyError, translateBody } from "@/lib/translate";
+import { translateBody } from "@/lib/translate";
 
 export const dynamic = "force-dynamic";
 
@@ -25,10 +25,10 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   if (lang === "en") return NextResponse.json({ body });
 
   try {
-    const translation = await translateBody(subject, body, langInfo(lang).english);
+    const translation = await translateBody(subject, body, lang, langInfo(lang).english);
     return NextResponse.json({ body, translation });
   } catch (err: any) {
     console.error("Body translation failed", err);
-    return NextResponse.json({ body, translateError: err instanceof NoKeyError ? "NO_KEY" : "FAILED" });
+    return NextResponse.json({ body, translateError: "FAILED" });
   }
 }
