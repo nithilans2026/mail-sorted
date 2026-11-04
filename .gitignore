@@ -1,0 +1,25 @@
+node_modules
+.next
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets: never commit
+.env
+.env.local
+.env.*.local
+
+# Vercel link + Android signing key / build output (keep private, back up separately)
+.vercel
+android
+
+# Local helper scripts for pushing keys to Vercel
+import-google-secret.ps1
+push-keys-to-vercel.ps1
+send-google-secret.ps1
+SEND-GOOGLE-SECRET.cmd
+
+# APK is attached to GitHub Releases instead of committed
+public/download
+
+# Local editor/agent config
+.claude

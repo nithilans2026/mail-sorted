@@ -1,0 +1,26 @@
+[
+    {
+        "relation":  [
+                         "delegate_permission/common.handle_all_urls"
+                     ],
+        "target":  {
+                       "namespace":  "android_app",
+                       "package_name":  "app.vercel.mail_sorted.twa",
+                       "sha256_cert_fingerprints":  [
+                                                        "BD:1C:54:55:1F:A4:FA:66:CF:8C:CD:A3:7B:81:93:83:A2:AC:01:C3:00:DF:4C:2D:10:A2:71:EF:61:24:7C:C1"
+                                                    ]
+                   }
+    },
+    {
+        "relation":  [
+                         "delegate_permission/common.handle_all_urls"
+                     ],
+        "target":  {
+                       "namespace":  "android_app",
+                       "package_name":  "app.vercel.vit_mail_sorter.twa",
+                       "sha256_cert_fingerprints":  [
+                                                        "34:D8:CD:98:D5:21:11:9B:F7:12:8C:BD:02:EC:0E:D4:76:5F:B2:24:11:60:41:34:59:0C:13:11:DF:51:41:82"
+                                                    ]
+                   }
+    }
+]

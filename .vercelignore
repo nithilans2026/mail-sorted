@@ -1,0 +1,12 @@
+# Never upload secrets or local-only files. Keys are added in Vercel's own settings instead.
+.env
+.env.local
+.env.*.local
+import-google-secret.ps1
+push-keys-to-vercel.ps1
+.claude
+node_modules
+.next
+android
+send-google-secret.ps1
+SEND-GOOGLE-SECRET.cmd
