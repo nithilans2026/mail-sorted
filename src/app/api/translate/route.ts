@@ -6,8 +6,8 @@ import { translateList, type ListItem } from "@/lib/translate";
 
 // POST { lang, items: [{ id, subject, snippet }] } -> { items }
 export async function POST(req: Request) {
-  const session: any = await getServerSession(authOptions);
-  if (!session?.accessToken) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const { lang = "en", items = [] } = (await req.json().catch(() => ({}))) as { lang?: string; items?: ListItem[] };
   try {

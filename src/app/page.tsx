@@ -194,7 +194,7 @@ export default function Home() {
   const busyRef = useRef(false);
   const seenRef = useRef<Set<string> | null>(null);
   const checkedRef = useRef<Set<string>>(new Set());
-  const translatingRef = useRef(false);
+  const failedRef = useRef<Set<string>>(new Set());
 
   const t = strings(lang);
   const ts = syncStrings(lang);
@@ -287,6 +287,7 @@ export default function Home() {
 
   const changeLang = (l: string) => {
     setLang(l);
+    failedRef.current.clear();
     write(LANG_KEY, l);
     setTranslateState("idle");
   };
@@ -327,6 +328,7 @@ export default function Home() {
     busyRef.current = true;
     setLoading(true);
     setError(null);
+    if (trigger === "manual") failedRef.current.clear();
     try {
       const res = await fetch("/api/mail", {
         method: "POST",
@@ -390,39 +392,57 @@ export default function Home() {
 
   // Translate subjects and previews for any mails not yet translated into the chosen language.
   useEffect(() => {
-    if (lang === "en" || mails.length === 0) return;
-    const missing = mails.filter((m) => !translations[`${lang}:${m.id}`]);
-    if (missing.length === 0 || translatingRef.current) return;
+    if (lang === "en" || mails.length === 0) {
+      setTranslateState("idle");
+      return;
+    }
+    const missing = mails.filter((m) => !translations[`${lang}:${m.id}`] && !failedRef.current.has(`${lang}:${m.id}`));
+    if (missing.length === 0) {
+      setTranslateState("idle");
+      return;
+    }
 
-    translatingRef.current = true;
+    const controller = new AbortController();
     setTranslateState("busy");
 
     fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lang, items: missing.map((m) => ({ id: m.id, subject: m.subject, snippet: m.snippet })) }),
+      signal: controller.signal,
     })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "FAILED");
+        const receivedIds = new Set<string>();
         setTranslations((prev) => {
           const next = { ...prev };
           for (const item of (data.items || [])) {
-            next[`${lang}:${item.id}`] = { subject: item.subject, snippet: item.snippet };
-          }
-          for (const m of missing) {
-            next[`${lang}:${m.id}`] ??= { subject: m.subject, snippet: m.snippet };
+            if (item && item.id) {
+              receivedIds.add(item.id);
+              next[`${lang}:${item.id}`] = { subject: item.subject, snippet: item.snippet };
+            }
           }
           return next;
         });
+        for (const m of missing) {
+          if (!receivedIds.has(m.id)) {
+            failedRef.current.add(`${lang}:${m.id}`);
+          }
+        }
         setTranslateState("idle");
       })
       .catch((e) => {
+        if (e.name === "AbortError") return;
+        for (const m of missing) {
+          failedRef.current.add(`${lang}:${m.id}`);
+        }
         setTranslateState(e.message === "NO_KEY" ? "NO_KEY" : "FAILED");
-      })
-      .finally(() => {
-        translatingRef.current = false;
       });
+
+    return () => {
+      controller.abort();
+    };
   }, [lang, mails, translations]);
 
   const openReader = async (mail: SortedMail) => {

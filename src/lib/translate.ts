@@ -26,41 +26,126 @@ const ListResult = z.object({
 
 export type ListItem = z.infer<typeof ListResult>["items"][number];
 
-// Free Google Translate endpoint (works for all 45 languages without an API key)
-async function freeTranslate(text: string, targetLang: string): Promise<string> {
+// Parses Google clients5 Chrome extension translate response
+function parseClients5(d: any): string {
+  if (!d) return "";
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    if (d.length > 0 && Array.isArray(d[0])) {
+      return d.map((item) => (Array.isArray(item) ? item[0] : item) || "").join("");
+    }
+    if (typeof d[0] === "string") {
+      return d.join("");
+    }
+  }
+  return "";
+}
+
+// Parses Google Android translate response
+function parseAt(d: any): string {
+  if (Array.isArray(d) && Array.isArray(d[0])) {
+    return d[0].map((part) => (Array.isArray(part) ? part[0] : part) || "").join("");
+  }
+  return "";
+}
+
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+// Concurrency limiter so we don't fire 100 simultaneous requests and get rate limited
+async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// Free multi-tier translation engine (works for all 45 languages without any API key)
+export async function freeTranslate(text: string, targetLang: string): Promise<string> {
   if (!text || !text.trim()) return text;
   const langCode = targetLang === "zh" ? "zh-CN" : targetLang === "nb" ? "no" : targetLang;
+
+  // Tier 1: Google Chrome Extension API
   try {
-    const res = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(langCode)}&dt=t&q=${encodeURIComponent(text)}`,
-      { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
-    );
-    if (!res.ok) throw new Error(`Translate API returned ${res.status}`);
-    const data = await res.json();
-    if (Array.isArray(data) && Array.isArray(data[0])) {
-      return data[0].map((part: any) => part[0] || "").join("");
+    const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=${encodeURIComponent(langCode)}&q=${encodeURIComponent(text)}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      signal: AbortSignal.timeout(5000),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const parsed = parseClients5(data);
+      if (parsed && parsed.trim()) return parsed;
     }
-  } catch (err) {
-    console.warn("Free translation request failed:", err);
-  }
+  } catch {}
+
+  // Tier 2: Google Android Translate API
+  try {
+    const url = `https://translate.googleapis.com/translate_a/single?client=at&sl=auto&tl=${encodeURIComponent(langCode)}&dt=t&q=${encodeURIComponent(text)}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "GoogleTranslate/6.28.0.05.357902403 (Linux; U; Android 11; Pixel 5)",
+      },
+      signal: AbortSignal.timeout(5000),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const parsed = parseAt(data);
+      if (parsed && parsed.trim()) return parsed;
+    }
+  } catch {}
+
+  // Tier 3: MyMemory API
+  try {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|${encodeURIComponent(langCode)}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(5000),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const translated = data?.responseData?.translatedText;
+      if (translated && typeof translated === "string" && translated.trim() && !translated.startsWith("'AUTO' IS AN INVALID")) {
+        return decodeHtmlEntities(translated);
+      }
+    }
+  } catch {}
+
   return text;
 }
 
 async function translateItemsFree(items: ListItem[], langCode: string): Promise<ListItem[]> {
   const code = langCode === "zh" ? "zh-CN" : langCode === "nb" ? "no" : langCode;
-  return Promise.all(
-    items.map(async (item) => {
-      try {
-        const [subject, snippet] = await Promise.all([
-          freeTranslate(item.subject, code).catch(() => item.subject),
-          freeTranslate(item.snippet, code).catch(() => item.snippet),
-        ]);
-        return { id: item.id, subject: subject || item.subject, snippet: snippet || item.snippet };
-      } catch {
-        return item;
-      }
-    })
-  );
+  return mapConcurrent(items, 5, async (item) => {
+    try {
+      const [subject, snippet] = await Promise.all([
+        freeTranslate(item.subject, code).catch(() => item.subject),
+        freeTranslate(item.snippet, code).catch(() => item.snippet),
+      ]);
+      return { id: item.id, subject: subject || item.subject, snippet: snippet || item.snippet };
+    } catch {
+      return item;
+    }
+  });
 }
 
 // Subjects and previews for the inbox list. Tries Claude first if key is present, falls back to free translation.
@@ -88,16 +173,44 @@ export async function translateList(items: ListItem[], langCode: string, languag
   return translateItemsFree(items, code);
 }
 
-// Splits long bodies on paragraph breaks so each request stays well within output limits.
-function chunks(text: string, size = 3000) {
+// Splits long bodies on paragraph/sentence breaks so each request stays well within limits.
+function chunks(text: string, size = 1200): string[] {
+  if (!text) return [];
+  if (text.length <= size) return [text];
+
   const out: string[] = [];
+  const paragraphs = text.split(/\n+/);
   let current = "";
-  for (const para of text.split(/\n{2,}/)) {
-    if (current && current.length + para.length > size) {
-      out.push(current);
-      current = "";
+
+  for (const para of paragraphs) {
+    if (para.length > size) {
+      if (current) {
+        out.push(current);
+        current = "";
+      }
+      const sentences = para.match(/[^.!?]+[.!?]+|\S+/g) || [para];
+      let subCurrent = "";
+      for (const s of sentences) {
+        if (subCurrent && subCurrent.length + s.length > size) {
+          out.push(subCurrent);
+          subCurrent = "";
+        }
+        if (s.length > size) {
+          for (let i = 0; i < s.length; i += size) {
+            out.push(s.slice(i, i + size));
+          }
+        } else {
+          subCurrent += (subCurrent ? " " : "") + s;
+        }
+      }
+      if (subCurrent) out.push(subCurrent);
+    } else {
+      if (current && current.length + para.length + 1 > size) {
+        out.push(current);
+        current = "";
+      }
+      current += (current ? "\n" : "") + para;
     }
-    current += (current ? "\n\n" : "") + para;
   }
   if (current) out.push(current);
   return out;
@@ -124,7 +237,7 @@ export async function translateBody(subject: string, body: string, langCode: str
 
       const [translatedSubject, ...parts] = await Promise.all([
         translateText(subject),
-        ...chunks(body, 6000).map(translateText),
+        ...chunks(body, 5000).map(translateText),
       ]);
       return { subject: translatedSubject, body: parts.join("\n\n") };
     } catch (e) {
@@ -133,10 +246,8 @@ export async function translateBody(subject: string, body: string, langCode: str
   }
 
   // Free translation fallback
-  const bodyChunks = chunks(body, 2000);
-  const [translatedSubject, ...parts] = await Promise.all([
-    freeTranslate(subject, code).catch(() => subject),
-    ...bodyChunks.map((chunk) => freeTranslate(chunk, code).catch(() => chunk)),
-  ]);
+  const bodyChunks = chunks(body, 1200);
+  const translatedSubject = await freeTranslate(subject, code).catch(() => subject);
+  const parts = await mapConcurrent(bodyChunks, 3, (chunk) => freeTranslate(chunk, code).catch(() => chunk));
   return { subject: translatedSubject, body: parts.join("\n\n") };
 }
